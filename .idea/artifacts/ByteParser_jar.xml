@@ -1,0 +1,10 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="ByteParser:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/ByteParser_jar</output-path>
+    <root id="archive" name="ByteParser.jar">
+      <element id="module-output" name="ByteParser" />
+      <element id="module-output" name="ByteParser-build" />
+      <element id="extracted-dir" path="$USER_HOME$/AppData/Local/Coursier/cache/v1/https/repo1.maven.org/maven2/org/scala-lang/scala-library/2.13.10/scala-library-2.13.10.jar" path-in-jar="/" />
+    </root>
+  </artifact>
+</component>
