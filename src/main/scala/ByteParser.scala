@@ -3,66 +3,87 @@ import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{FileAlreadyExistsException, Files, Path, Paths}
+import java.util.Scanner
 import scala.collection.mutable
 import scala.io.StdIn.readLine
 
+/** ByteParser reads in a file and writes its extension, size, and non-zero bit locations into a .byteparser file.
+ *  For .byteparser files, it creates a RandomAccessFile named the same as the .byteparser's filename with the
+ *  original extension, resizes it to the original file size, and then writes its bytes to the appropriate
+ *  positions to recreate the original file.
+ */
 object ByteParser {
   def reconstruct(file : String) : Unit = {
     try {
       var first : Boolean = true
       var second : Boolean = true
-      val reader : BufferedReader = Files.newBufferedReader(Paths.get(file))
+      val scanner : Scanner = new Scanner(Paths.get(file).toFile)
+      scanner.useDelimiter("[,:]")
       var channel : FileChannel = null
       var newFile : RandomAccessFile = null
       var totalLength : Long = 0
       var currentLength : Long = 0
+      var byteVal : Byte = 0
 
+      while(scanner.hasNext) {
+        if (first) {
+          val ext : String = scanner.nextLine()
 
-
-      reader.lines().forEachOrdered(line =>
-      {
-        if (line.nonEmpty)
-          if (first) {
-            newFile = new RandomAccessFile(
-              Files.createFile(
-                Paths.get(
-                  Paths.get(file).getParent.toString,
-                  Paths.get(file).getFileName.toString.replace("byteparser", line)
-                )
-              ).toFile
-              ,"w"
-            )
-            first = false
-            println(s"Created destination file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", line)}\".")
-          } else if (second) {
-            totalLength = new BigInteger(line).longValueExact()
-            newFile.setLength(totalLength)
-            channel = newFile.getChannel
-            second = false
-            println(s"Expanded file to $line bytes and opened FileChannel for writing.")
-          } else {
-            var byteVal : Byte = 0
-            var firstNum : Boolean = true
-            val arr : Array[Byte] = Array.emptyByteArray
-            for (stringNum : String <- line.split("[,:\\n]")) {
-              if (firstNum) {
-                byteVal = stringNum.toByte
-                firstNum = false
-              } else {
-                arr.update(0, byteVal)
-                channel.position(stringNum.toLong).write(ByteBuffer.wrap(arr))
-                currentLength+=1
-                print(s"\rWrote $currentLength of $totalLength bytes.")
-              }
-            }
+          if (Files.exists(Paths.get(Paths.get(file).getParent.toString, Paths.get(file).getFileName.toString.replace("byteparser", ext)))) {
+            println(s"Unable to recreate file, \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\" exists.")
+            println("Please delete or relocate and try again.")
+            readLine()
+            System.exit(-1)
           }
-      })
 
+          newFile = new RandomAccessFile(
+            Files.createFile(
+              Paths.get(
+                Paths.get(file).getParent.toString,
+                Paths.get(file).getFileName.toString.replace("byteparser", ext)
+              )
+            ).toFile
+            ,"rw"
+          )
+          first = false
+          println(s"Created destination file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\".")
+        } else if (second) {
+          totalLength = scanner.nextLine.toLong
+          newFile.setLength(totalLength)
+          channel = newFile.getChannel
+          second = false
+          println(s"Expanded file to $totalLength bytes and opened FileChannel for writing.")
+        } else {
+          if (byteVal == 0)
+            byteVal = scanner.nextByte()
+          val arr: Array[Byte] = Array(0)
+          var num : String = ""
+          var longNum : Long = 0
+          arr.update(0, byteVal)
+
+          do {
+            num = scanner.next()
+
+            if (num.contains("\n")) {
+              longNum = num.split("\n")(0).toLong
+              if (num.split("\n").length > 1)
+                byteVal = num.split("\n")(1).toByte
+            } else
+              longNum = num.replace(",","").toLong
+
+            channel.position(longNum).write(ByteBuffer.wrap(arr))
+            currentLength += 1
+            print(s"\rWrote $currentLength of $totalLength bytes.")
+          } while (!num.contains("\n"))
+        }
+      }
+
+      print(s"\rWrote $totalLength of $totalLength bytes.")
       println()
       println("Finished regenerating file! Closing streams.")
       channel.close()
       newFile.close()
-      reader.close()
+      scanner.close()
     } catch {
       case io : IOException => println(s"Error while reading file \"$file\": $io")
       case ae : ArithmeticException => println(
@@ -155,7 +176,7 @@ object ByteParser {
         if (Files.exists(Paths.get(Paths.get(file).getParent.toString, s"\\$i.txt"))) {
           println(s"Combining file \"${Paths.get(file).getParent.toString + s"\\$i.txt"}\"...")
           val fr : FileReader = new FileReader(Paths.get(file).getParent.toString + s"\\$i.txt")
-          writer.write(s"$i:");
+          writer.write(s"$i:")
           fr.transferTo(writer)
           fr.close()
           writer.write("\n")
