@@ -1,10 +1,13 @@
-import java.io._
-import java.math.BigInteger
-import java.nio.ByteBuffer
+import java.io.{BufferedWriter, FileReader, FileWriter, IOException, RandomAccessFile}
+import java.nio.{BufferUnderflowException, ByteBuffer}
 import java.nio.channels.FileChannel
-import java.nio.file.{FileAlreadyExistsException, Files, Path, Paths}
+import java.nio.file.{FileAlreadyExistsException, FileSystemException, Files, Path, Paths}
 import java.util.Scanner
+import java.util.concurrent.atomic.AtomicLong
+import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.io.StdIn.readLine
 
 /** ByteParser reads in a file and writes its extension, size, and non-zero bit locations into a .byteparser file.
@@ -13,6 +16,12 @@ import scala.io.StdIn.readLine
  *  positions to recreate the original file.
  */
 object ByteParser {
+
+  var fileSize : Long = 0
+  val atomicBytesWritten : AtomicLong = new AtomicLong(0)
+  val writerMap : TrieMap[Byte, BufferedWriter] = TrieMap()
+  var workers : Array[Future[Boolean]] = null
+
   def reconstruct(file : String) : Unit = {
     try {
       var first : Boolean = true
@@ -109,7 +118,7 @@ object ByteParser {
         ".byteparser"
       )
     ))) {
-      println(s"Unable to parse file, byteparser file already exists (\'${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace(
+      println(s"Unable to parse file, .byteparser file already exists (\'${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace(
         "." + Paths.get(file).getFileName.toString.split("\\.").last,
         ".byteparser"
       )}.")
@@ -119,9 +128,6 @@ object ByteParser {
     }
 
     try {
-      var fileSize : Long = 0
-      var currentByte : Long = 0
-
       val outputFile : Path = Files.createFile(
         Paths.get(
           Paths.get(file).getParent.toString,
@@ -131,7 +137,7 @@ object ByteParser {
           )
         )
       )
-      println(s"Created byteparser file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("." + Paths.get(file).getFileName.toString.split("\\.").last,".byteparser")}\".")
+      println(s"Created .byteparser file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("." + Paths.get(file).getFileName.toString.split("\\.").last,".byteparser")}\".")
 
       val writer : FileWriter = new FileWriter(outputFile.toFile)
       writer.write(Paths.get(file).getFileName.toString.split("\\.").last + "\n")
@@ -143,59 +149,119 @@ object ByteParser {
       writer.flush()
       println(s"Wrote file size to file: $fileSize")
 
-      val first : mutable.Map[Byte, Boolean] = mutable.Map()
-      for(i : Int <- -128 to 127)
-        first.put(i.toByte, true)
+      val coreCount : Int = Runtime.getRuntime.availableProcessors()
+      val threadByteCounts : mutable.ListBuffer[Long] = mutable.ListBuffer()
+      for (i : Int <- 0 until coreCount)
+        threadByteCounts.insert(i, Math.floor(fileSize / coreCount).toLong)
 
-      val bis : BufferedInputStream = new BufferedInputStream(new FileInputStream(file))
-      Iterator.continually(bis.read())
-        .takeWhile(_ != -1)
-        .foreach(b => {
-          if (b != 0)
-            if(first(b.toByte)) {
-              val fw : FileWriter = new FileWriter(Paths.get(file).getParent.toString + s"\\${b.toByte}.txt")
-              fw.write(currentByte.toString)
-              fw.flush()
-              fw.close()
-              first.put(b.toByte, false)
-            } else {
-              val fw : FileWriter = new FileWriter(Paths.get(file).getParent.toString + s"\\${b.toByte}.txt", true)
-              fw.write(s",$currentByte")
-              fw.flush()
-              fw.close()
-            }
+      if ((fileSize - (Math.floor(fileSize / coreCount).toLong * coreCount)) > 0)
+        for (i : Int <- 0 until (fileSize - (Math.floor(fileSize / coreCount).toLong * coreCount)).toInt)
+          threadByteCounts(i) += 1
 
-          currentByte += 1
-          print(s"\rWrote Byte $currentByte of $fileSize.")
-        })
-      bis.close()
+      val randFile : RandomAccessFile = new RandomAccessFile(Paths.get(file).toFile, "r")
+      var pos : Long = 0
+      workers = Array.ofDim(coreCount)
+      for (i : Int <- 0 until coreCount) {
+        workers(i) = parallelParse(randFile.getChannel, pos, threadByteCounts(i), Paths.get(file).getParent.toString)
+        pos += threadByteCounts(i)
+      }
+      do {
+        print(s"\rWrote ${atomicBytesWritten.get()} of $fileSize Bytes.")
+        Thread.sleep(1000)
+      } while(!atomicBytesWritten.get().equals(fileSize))
+
+      print(s"\rWrote ${atomicBytesWritten.get()} of $fileSize Bytes.")
+      writerMap.values.foreach(p => p.close())
+      writerMap.clear()
+      randFile.close()
 
       println()
       println("Combining files...")
       for(i : Int <- -128 to 127)
         if (Files.exists(Paths.get(Paths.get(file).getParent.toString, s"\\$i.txt"))) {
-          println(s"Combining file \"${Paths.get(file).getParent.toString + s"\\$i.txt"}\"...")
+          // Replacing last comma with a newline.
+          val rnd : RandomAccessFile = new RandomAccessFile(Paths.get(Paths.get(file).getParent.toString + s"\\$i.txt").toFile, "rw")
+          rnd.seek(rnd.length()-1)
+          rnd.write(10)
+          rnd.close()
+
           val fr : FileReader = new FileReader(Paths.get(file).getParent.toString + s"\\$i.txt")
           writer.write(s"$i:")
           fr.transferTo(writer)
-          fr.close()
-          writer.write("\n")
           writer.flush()
+          fr.close()
         }
 
-      println(s"Finished writing byteparser file \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("." + Paths.get(file).getFileName.toString.split("\\.").last,".byteparser")}\"!")
+      println(s"Finished writing .byteparser file \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("." + Paths.get(file).getFileName.toString.split("\\.").last,".byteparser")}\"!")
       writer.close()
     } catch {
       case faee: FileAlreadyExistsException => println(
-        s"Error while creating byteparser file for \"$file\": File already exists!" +
+        s"Error while creating .byteparser file for \"$file\": File already exists!" +
           System.lineSeparator() + faee
       )
-      case se : SecurityException => println(s"Error while attempting to create byteparser file for \"$file\": $se")
+      case se : SecurityException => println(s"Error while attempting to create .byteparser file for \"$file\": $se")
     } finally {
       println("Cleaning up temporary files...")
-      for(i : Int <- -128 to 127)
-        if (Files.deleteIfExists(Paths.get(Paths.get(file).getParent.toString, s"\\$i.txt")))
-          println(s"Deleted \"${Paths.get(file).getParent.toString + s"\\$i.txt"}\".")
+      for(i : Int <- -128 to 127) {
+        if (i != 0) {
+          var deleted: Boolean = false
+          do {
+            try {
+              deleted = Files.deleteIfExists(Paths.get(Paths.get(file).getParent.toString, s"\\$i.txt"))
+            } catch {
+              case fse: FileSystemException =>
+                println(Paths.get(file).getParent.toString + s"\\$i.txt is still in use! Waiting three seconds before retrying...")
+                System.gc()
+                Thread.sleep(3000)
+            }
+          } while (!deleted)
+        }
+      }
+    }
+  }
+
+  private def parallelParse(channel : FileChannel, start : Long, len : Long, parentPath : String) : Future[Boolean] = {
+    Future[Boolean] {
+      try {
+      var pos : Long = start
+      val max : Long = start + len
+      var buffer : ByteBuffer = null
+      var arr : Array[Byte] = null
+
+      if ((max - pos) > Integer.MAX_VALUE) {
+        buffer = ByteBuffer.allocateDirect(Integer.MAX_VALUE)
+        arr = Array.ofDim[Byte](buffer.capacity())
+      }
+
+      while (pos < max) {
+        if (max - pos < Integer.MAX_VALUE) {
+          buffer = ByteBuffer.allocateDirect((max - pos).toInt)
+          arr = Array.ofDim[Byte](buffer.capacity())
+        }
+        channel.position(pos)
+        channel.read(buffer)
+        buffer.flip()
+        buffer.get(arr)
+        arr.indices.foreach(b => {
+          if (arr(b) != 0) {
+            if (!writerMap.contains(arr(b))) {
+              val writer : BufferedWriter = new BufferedWriter(new FileWriter(Paths.get(parentPath + s"\\${arr(b)}.txt").toFile, true))
+              //threadWriters.append(writer)
+              writerMap.putIfAbsent(arr(b), writer)
+            }
+            writerMap(arr(b)).write((pos + b).toString + ",")
+          }
+          atomicBytesWritten.incrementAndGet()
+        })
+        pos += buffer.capacity()
+      }
+      buffer.clear()
+      true
+    } catch {
+        case bue : BufferUnderflowException =>
+          println("Received BufferUnderflowException!")
+          false
+      }
     }
   }
 }
