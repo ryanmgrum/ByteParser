@@ -15,12 +15,14 @@ object Main {
       def path : Path = Paths.get(filePath)
 
       def file : File = path.toFile
-      if (file.isFile)
+      if (file.isFile) {
+        println(s"Processing \"$filePath\"...")
+        println(s"Extension is \"${path.getFileName.toString.split("\\.").last}\".")
         if (path.getFileName.toString.split("\\.").last.equals("byteparser"))
           ByteParser.reconstruct(filePath)
         else
           ByteParser.parse(filePath)
-      else
+      } else
         println(s"Unable to parse directory or unknown \"$filePath\" at this time!")
     }
   }

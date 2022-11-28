@@ -9,9 +9,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="0581cb5f-6003-4734-955f-157ffbd590c0" name="Changes" comment="Parallelized reconstruct method.">
+    <list default="true" id="0581cb5f-6003-4734-955f-157ffbd590c0" name="Changes" comment="Added initial message of the file being processed.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/scala/ByteParser.scala" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/scala/ByteParser.scala" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -131,7 +130,28 @@
       <option name="project" value="LOCAL" />
       <updated>1669609627411</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="Added ability to process what is in the valueMap when full and for threads to hold off when it is full.">
+      <created>1669647322400</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1669647322400</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Added initial message of the file being processed.">
+      <created>1669647582000</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1669647582000</updated>
+    </task>
+    <task id="LOCAL-00011" summary="Added initial message of the file being processed.">
+      <created>1669649251836</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1669649251836</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -150,17 +170,8 @@
     <MESSAGE value="Fixed multitude of bugs, added checks and error-handling, and got reconstruct working." />
     <MESSAGE value="Parallelized parse method." />
     <MESSAGE value="Parallelized reconstruct method." />
-    <option name="LAST_COMMIT_MESSAGE" value="Parallelized reconstruct method." />
-  </component>
-  <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" type="scala-line">
-          <url>file://$PROJECT_DIR$/src/main/scala/ByteParser.scala</url>
-          <line>122</line>
-          <option name="timeStamp" value="16" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
+    <MESSAGE value="Added ability to process what is in the valueMap when full and for threads to hold off when it is full." />
+    <MESSAGE value="Added initial message of the file being processed." />
+    <option name="LAST_COMMIT_MESSAGE" value="Added initial message of the file being processed." />
   </component>
 </project>
