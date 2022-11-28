@@ -1,11 +1,13 @@
 import java.io.{BufferedWriter, FileReader, FileWriter, IOException, RandomAccessFile}
-import java.nio.{BufferUnderflowException, ByteBuffer}
-import java.nio.channels.FileChannel
-import java.nio.file.{FileAlreadyExistsException, FileSystemException, Files, Path, Paths}
+import java.nio.channels.FileChannel.MapMode
+import java.nio.{BufferUnderflowException, ByteBuffer, MappedByteBuffer}
+import java.nio.channels.{AsynchronousFileChannel, FileChannel, SeekableByteChannel}
+import java.nio.file.{FileAlreadyExistsException, FileSystemException, Files, Path, Paths, StandardOpenOption}
 import java.util.Scanner
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.io.StdIn.readLine
@@ -20,85 +22,163 @@ object ByteParser {
   var fileSize : Long = 0
   val atomicBytesWritten : AtomicLong = new AtomicLong(0)
   val writerMap : TrieMap[Byte, BufferedWriter] = TrieMap()
-  var workers : Array[Future[Boolean]] = null
+  var workers : Array[Future[Boolean]] = _
+  var allWorkersDone : Boolean = false
+  val valueMap : scala.collection.concurrent.TrieMap[Long, Byte] = TrieMap()
 
   def reconstruct(file : String) : Unit = {
     try {
-      var first : Boolean = true
-      var second : Boolean = true
       val scanner : Scanner = new Scanner(Paths.get(file).toFile)
       scanner.useDelimiter("[,:]")
-      var channel : FileChannel = null
       var newFile : RandomAccessFile = null
-      var totalLength : Long = 0
-      var currentLength : Long = 0
-      var byteVal : Byte = 0
+      var fileChannel : SeekableByteChannel = null
 
-      while(scanner.hasNext) {
-        if (first) {
-          val ext : String = scanner.nextLine()
 
-          if (Files.exists(Paths.get(Paths.get(file).getParent.toString, Paths.get(file).getFileName.toString.replace("byteparser", ext)))) {
-            println(s"Unable to recreate file, \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\" exists.")
-            println("Please delete or relocate and try again.")
-            readLine()
-            System.exit(-1)
-          }
-
-          newFile = new RandomAccessFile(
-            Files.createFile(
-              Paths.get(
-                Paths.get(file).getParent.toString,
-                Paths.get(file).getFileName.toString.replace("byteparser", ext)
-              )
-            ).toFile
-            ,"rw"
+      val newlinePositions : ListBuffer[Long] = ListBuffer()
+      val sbc : SeekableByteChannel = Files.newByteChannel(Paths.get(file))
+      var pos : Long = 0
+      var read : Int = 0
+      val bb : ByteBuffer = ByteBuffer.allocateDirect(Integer.MAX_VALUE)
+      do {
+        read = sbc.read(bb)
+        if (read > 0) {
+          val arr : Array[Byte] = Array.ofDim[Byte](read)
+          bb.flip()
+          bb.get(arr)
+          arr.indices.foreach(i =>
+            if (arr(i) == 10)
+              newlinePositions.append(pos + i)
           )
-          first = false
-          println(s"Created destination file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\".")
-        } else if (second) {
-          totalLength = scanner.nextLine.toLong
-          newFile.setLength(totalLength)
-          channel = newFile.getChannel
-          second = false
-          println(s"Expanded file to $totalLength bytes and opened FileChannel for writing.")
-        } else {
-          if (byteVal == 0)
-            byteVal = scanner.nextByte()
-          val arr: Array[Byte] = Array(0)
-          var num : String = ""
-          var longNum : Long = 0
-          arr.update(0, byteVal)
-
-          do {
-            num = scanner.next()
-
-            if (num.contains("\n")) {
-              longNum = num.split("\n")(0).toLong
-              if (num.split("\n").length > 1)
-                byteVal = num.split("\n")(1).toByte
-            } else
-              longNum = num.replace(",","").toLong
-
-            channel.position(longNum).write(ByteBuffer.wrap(arr))
-            currentLength += 1
-            print(s"\rWrote $currentLength of $totalLength bytes.")
-          } while (!num.contains("\n"))
+          pos += read
         }
+      } while(read > 0)
+
+      sbc.close()
+
+
+      val ext : String = scanner.nextLine()
+
+      if (Files.exists(Paths.get(Paths.get(file).getParent.toString, Paths.get(file).getFileName.toString.replace("byteparser", ext)))) {
+        println(s"Unable to recreate file, \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\" exists.")
+        println("Please delete or relocate and try again.")
+        readLine()
+        System.exit(-1)
       }
 
-      print(s"\rWrote $totalLength of $totalLength bytes.")
+      newFile = new RandomAccessFile(
+        Files.createFile(
+          Paths.get(
+            Paths.get(file).getParent.toString,
+            Paths.get(file).getFileName.toString.replace("byteparser", ext)
+          )
+        ).toFile
+        ,"rw"
+      )
+      println(s"Created destination file: \"${Paths.get(file).getParent.toString}\\${Paths.get(file).getFileName.toString.replace("byteparser", ext)}\".")
+      fileChannel = Files.newByteChannel(Paths.get(file), StandardOpenOption.READ)
+      fileSize = scanner.nextLine.toLong
+      newFile.setLength(fileSize)
+      println(s"Expanded file to $fileSize bytes and opened FileChannel for writing.")
+      scanner.close()
+
+      workers = Array.ofDim(newlinePositions.length)
+      for(i : Int <- 1 until newlinePositions.length - 1)
+        workers.update(i-1, reconstructParallel(newlinePositions(i), newlinePositions(i+1)+1, newFile.getChannel, fileChannel))
+
+      val queue : Future[Boolean] = processQueue(newFile.getChannel)
+
+      do {
+        print(s"\rWrote ${atomicBytesWritten.get()} of $fileSize bytes.")
+        Thread.sleep(1000)
+        allWorkersDone = workers.filter(w => w != null).forall(w => w.isCompleted)
+      } while (!allWorkersDone || !queue.isCompleted)
+
+      fileChannel.close()
+      newFile.getChannel.close()
+
+      print(s"\rWrote ${atomicBytesWritten.get()} of $fileSize bytes.")
       println()
       println("Finished regenerating file! Closing streams.")
-      channel.close()
-      newFile.close()
-      scanner.close()
     } catch {
       case io : IOException => println(s"Error while reading file \"$file\": $io")
       case ae : ArithmeticException => println(
         s"Error while reading file \"$file\": File size is too large!" +
           System.lineSeparator() + ae
       )
+    }
+  }
+
+  private def processQueue(file : FileChannel) : Future[Boolean] = {
+    Future[Boolean] {
+      var pos : Long = 0
+      var size : Long = 1024*1024*1024
+      var mbb : MappedByteBuffer = null
+
+      do {
+        if (pos + size > fileSize)
+          size = fileSize - pos
+        mbb = file.map(MapMode.READ_WRITE, pos, size)
+        mbb.load()
+        while (pos < size) {
+          if (valueMap.contains(pos)) {
+            mbb.put(valueMap.remove(pos).get)
+            atomicBytesWritten.incrementAndGet()
+            pos += 1
+          } else if (!valueMap.contains(pos) && (allWorkersDone || valueMap.size == Integer.MAX_VALUE)) { // It is a zero and it will not be found so far, so skip.
+            mbb.put(Byte.box(0))
+            atomicBytesWritten.incrementAndGet()
+            pos += 1
+          } else
+            Thread.sleep(1000)
+        }
+        if (pos + size > fileSize)
+          pos = fileSize - pos
+        else
+          pos += size
+        mbb.force()
+      } while (!allWorkersDone || valueMap.nonEmpty)
+      true
+    }
+  }
+
+  private def reconstructParallel(start : Long, end : Long, file : FileChannel, sbc : SeekableByteChannel) : Future[Boolean] = {
+    Future[Boolean] {
+      val byteVal : Array[Byte] = Array(0)
+      var bb : ByteBuffer = null
+      var pos : Long = start+1
+      var read : Int = 0
+
+      if (end - pos > Integer.MAX_VALUE)
+        bb = ByteBuffer.allocateDirect(Integer.MAX_VALUE)
+
+      var foundNewline : Boolean = false
+      do {
+        if (end - pos <= Integer.MAX_VALUE)
+          bb = ByteBuffer.allocateDirect((end - pos).toInt)
+        read = sbc.position(pos).read(bb)
+        if (read > 0) {
+          val arr: Array[Byte] = Array.ofDim[Byte](read)
+          bb.flip()
+          bb.get(arr)
+          val num : mutable.StringBuilder = new mutable.StringBuilder()
+          var i : Int = 0;
+          while(i < arr.length) {
+            if (arr(i) == ':') {
+              byteVal.update(0, num.result.toByte)
+              num.clear()
+            } else if (arr(i) == ',') {
+              valueMap.put(num.result.toLong, byteVal(0))
+              num.clear()
+            } else if (arr(i) == 10)
+              foundNewline = true
+            else
+              num.append(Byte.box(arr(i)).toChar)
+            i += 1
+          }
+          pos += read
+        }
+      } while (!foundNewline)
+      true
     }
   }
 
