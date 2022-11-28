@@ -25,6 +25,7 @@ object ByteParser {
   var workers : Array[Future[Boolean]] = _
   var allWorkersDone : Boolean = false
   val valueMap : scala.collection.concurrent.TrieMap[Long, Byte] = TrieMap()
+  val oneOffs : scala.collection.mutable.ListBuffer[Long] = ListBuffer()
 
   def reconstruct(file : String) : Unit = {
     try {
@@ -120,12 +121,18 @@ object ByteParser {
         mbb = file.map(MapMode.READ_WRITE, pos, size)
         mbb.load()
         while (pos < size) {
-          if (valueMap.contains(pos)) {
+          if (valueMap.contains(pos) || oneOffs.contains(pos)) {
             mbb.put(valueMap.remove(pos).get)
             atomicBytesWritten.incrementAndGet()
             pos += 1
-          } else if (!valueMap.contains(pos) && (allWorkersDone || valueMap.size == Integer.MAX_VALUE)) { // It is a zero and it will not be found so far, so skip.
+          } else if (!valueMap.contains(pos) && allWorkersDone) { // It is a zero, so skip.
             mbb.put(Byte.box(0))
+            atomicBytesWritten.incrementAndGet()
+            pos += 1
+          } else if (!valueMap.contains(pos) && valueMap.size == Integer.MAX_VALUE) { // Buffer is full, process a one-off.
+            val oneOffPos : Long = valueMap.keys.last
+            oneOffs.append(oneOffPos)
+            mbb.put(valueMap.remove(oneOffPos).get)
             atomicBytesWritten.incrementAndGet()
             pos += 1
           } else
@@ -167,11 +174,15 @@ object ByteParser {
               byteVal.update(0, num.result.toByte)
               num.clear()
             } else if (arr(i) == ',') {
+              if (valueMap.size == Integer.MAX_VALUE)
+                Thread.sleep(1000)
               valueMap.put(num.result.toLong, byteVal(0))
               num.clear()
-            } else if (arr(i) == 10)
+            } else if (arr(i) == 10) {
               foundNewline = true
-            else
+              if (num.nonEmpty)
+                valueMap.put(num.result.toLong, byteVal(0))
+            } else
               num.append(Byte.box(arr(i)).toChar)
             i += 1
           }
@@ -180,6 +191,11 @@ object ByteParser {
       } while (!foundNewline)
       true
     }
+
+
+
+
+
   }
 
   def parse(file : String) : Unit = {

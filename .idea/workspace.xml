@@ -124,7 +124,14 @@
       <option name="project" value="LOCAL" />
       <updated>1669606938194</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Parallelized reconstruct method.">
+      <created>1669609627411</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1669609627411</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -149,10 +156,9 @@
     <breakpoint-manager>
       <breakpoints>
         <line-breakpoint enabled="true" type="scala-line">
-          <condition expression="num.result.equals(&quot;388603&quot;)" language="Scala" />
           <url>file://$PROJECT_DIR$/src/main/scala/ByteParser.scala</url>
-          <line>166</line>
-          <option name="timeStamp" value="14" />
+          <line>122</line>
+          <option name="timeStamp" value="16" />
         </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
